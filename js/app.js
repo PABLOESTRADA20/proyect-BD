@@ -1,24 +1,55 @@
 // ============================================================
-//  Velvet & Co. — Lógica principal de la aplicación
+//  Velvet & Co. — Lógica principal (conectado a API/PostgreSQL)
 // ============================================================
 
 /* ── Estado de la UI ── */
 let activeCategory = 'Todos';
 let searchQuery    = '';
-let toastTimer     = null;
+let toastTimerRef  = null;
+
+// Caché local de productos (se llenan desde la API)
+let _products    = [];
+let _categories  = ['Todos'];
 
 /* ── Inicialización ──────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   Cart.onUpdate(updateCartUI);
-  renderCategoryBar();
-  renderProducts();
   Cart.onUpdate(({ count }) => bumpBadge(count));
+
+  await loadCategories();
+  await loadProducts();
 });
+
+/* ── Carga de datos desde la API ─────────────────────────── */
+async function loadCategories() {
+  try {
+    _categories = await API.getCategories();
+    renderCategoryBar();
+  } catch (err) {
+    console.error('Error cargando categorías:', err);
+  }
+}
+
+async function loadProducts() {
+  const grid = document.getElementById('productGrid');
+  grid.innerHTML = `<div class="empty-state"><p>Cargando productos...</p></div>`;
+
+  try {
+    _products = await API.getProducts({
+      category: activeCategory,
+      search:   searchQuery,
+    });
+    renderProducts();
+  } catch (err) {
+    console.error('Error cargando productos:', err);
+    grid.innerHTML = `<div class="empty-state"><p>❌ No se pudo conectar al servidor</p></div>`;
+  }
+}
 
 /* ── Categorías ──────────────────────────────────────────── */
 function renderCategoryBar() {
   const bar = document.getElementById('catBar');
-  bar.innerHTML = DB.categories
+  bar.innerHTML = _categories
     .map(
       (c) => `
       <button class="cat-btn${c === activeCategory ? ' active' : ''}"
@@ -32,37 +63,25 @@ function renderCategoryBar() {
 function setCategory(cat) {
   activeCategory = cat;
   renderCategoryBar();
-  renderProducts();
+  loadProducts();
 }
 
 /* ── Búsqueda ────────────────────────────────────────────── */
 function handleSearch() {
-  searchQuery = document.getElementById('searchInput').value.toLowerCase().trim();
-  renderProducts();
-}
-
-/* ── Filtrado ────────────────────────────────────────────── */
-function getFilteredProducts() {
-  return DB.products.filter((p) => {
-    const catOk    = activeCategory === 'Todos' || p.cat === activeCategory;
-    const searchOk = !searchQuery || p.name.toLowerCase().includes(searchQuery)
-                                  || p.cat.toLowerCase().includes(searchQuery)
-                                  || p.tags.some(t => t.toLowerCase().includes(searchQuery));
-    return catOk && searchOk;
-  });
+  searchQuery = document.getElementById('searchInput').value.trim();
+  loadProducts();
 }
 
 /* ── Renderizado de productos ────────────────────────────── */
 function renderProducts() {
-  const filtered = getFilteredProducts();
-  const grid     = document.getElementById('productGrid');
-  const title    = document.getElementById('sectionTitle');
-  const badge    = document.getElementById('countBadge');
+  const grid  = document.getElementById('productGrid');
+  const title = document.getElementById('sectionTitle');
+  const badge = document.getElementById('countBadge');
 
   title.textContent = activeCategory === 'Todos' ? 'Todos los productos' : activeCategory;
-  badge.textContent = `${filtered.length} producto${filtered.length !== 1 ? 's' : ''}`;
+  badge.textContent = `${_products.length} producto${_products.length !== 1 ? 's' : ''}`;
 
-  if (!filtered.length) {
+  if (!_products.length) {
     grid.innerHTML = `
       <div class="empty-state">
         <p style="font-size:2rem;margin-bottom:.5rem">🔍</p>
@@ -71,7 +90,7 @@ function renderProducts() {
     return;
   }
 
-  grid.innerHTML = filtered.map(productCard).join('');
+  grid.innerHTML = _products.map(productCard).join('');
 }
 
 function productCard(p) {
@@ -86,7 +105,7 @@ function productCard(p) {
         ${badgeHtml}
       </div>
       <div class="product-info">
-        <div class="product-cat">${p.cat}</div>
+        <div class="product-cat">${p.category}</div>
         <div class="product-name">${p.name}</div>
         <div class="product-stars">${starsHtml(p.stars)}</div>
         <div class="product-bottom">
@@ -100,16 +119,21 @@ function productCard(p) {
 }
 
 /* ── Modal de producto ───────────────────────────────────── */
-function openModal(id) {
-  const p = DB.products.find((x) => x.id === id);
-  if (!p) return;
+async function openModal(id) {
+  // Buscar en caché primero, sino pedir a la API
+  let p = _products.find((x) => x.id === id);
+  if (!p) {
+    try { p = await API.getProduct(id); } catch { return; }
+  }
+
+  const tags = Array.isArray(p.tags) ? p.tags : JSON.parse(p.tags || '[]');
 
   document.getElementById('mEmoji').textContent = p.emoji;
-  document.getElementById('mCat').textContent   = p.cat;
+  document.getElementById('mCat').textContent   = p.category;
   document.getElementById('mName').textContent  = p.name;
-  document.getElementById('mDesc').textContent  = p.desc;
+  document.getElementById('mDesc').textContent  = p.description;
   document.getElementById('mPrice').textContent = formatPrice(p.price);
-  document.getElementById('mTags').innerHTML    = p.tags
+  document.getElementById('mTags').innerHTML    = tags
     .map((t) => `<span class="tag">${t}</span>`)
     .join('');
 
@@ -134,23 +158,20 @@ function addToCart(event, id) {
 }
 
 function addToCartById(id) {
-  const p = DB.products.find((x) => x.id === id);
+  const p = _products.find((x) => x.id === id);
   if (!p) return;
   Cart.add(p);
   showToast(`${p.emoji} ${p.name} añadido`);
 }
 
 function updateCartUI({ items, count, total }) {
-  // Badge
   const badge = document.getElementById('cartBadge');
   badge.textContent = count;
 
-  // Totales
   document.getElementById('subtotalVal').textContent = formatPrice(total);
   document.getElementById('totalVal').textContent    = formatPrice(total);
   document.getElementById('checkoutBtn').disabled    = items.length === 0;
 
-  // Lista de items
   const container = document.getElementById('cartItems');
   if (!items.length) {
     container.innerHTML = `
@@ -244,12 +265,11 @@ function starsHtml(count) {
 function bumpBadge(count) {
   const badge = document.getElementById('cartBadge');
   badge.classList.remove('bump');
-  void badge.offsetWidth;               // reflow para reiniciar la animación
+  void badge.offsetWidth;
   if (count > 0) badge.classList.add('bump');
   setTimeout(() => badge.classList.remove('bump'), 300);
 }
 
-let toastTimerRef = null;
 function showToast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
