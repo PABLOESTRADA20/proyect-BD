@@ -13,8 +13,10 @@ let _categories  = ['Todos'];
 
 /* ── Inicialización ──────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', async () => {
-  Cart.onUpdate(updateCartUI);
-  Cart.onUpdate(({ count }) => bumpBadge(count));
+  Cart.onUpdate((state) => {
+    updateCartUI(state);
+    bumpBadge(state.count);
+  });
 
   await loadCategories();
   await loadProducts();
