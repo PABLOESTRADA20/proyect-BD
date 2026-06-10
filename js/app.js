@@ -229,22 +229,54 @@ function closeAll() {
 }
 
 /* ── Checkout ────────────────────────────────────────────── */
-function checkout() {
+async function checkout() {
   const container = document.getElementById('cartItems');
   const foot      = document.getElementById('cartFoot');
+  const { items, total } = Cart.getState();
+  const email = document.getElementById('emailInput')?.value || '';
 
-  container.innerHTML = `
-    <div class="success-screen">
-      <div class="success-icon">🎉</div>
-      <h3>¡Pedido confirmado!</h3>
-      <p>Tu pedido fue procesado exitosamente.<br>
-         Recibirás un email de confirmación.<br>
-         Envío discreto en 2–3 días hábiles.</p>
-      <button class="back-btn" onclick="resetAfterCheckout()">Seguir comprando</button>
-    </div>`;
-
+  container.innerHTML = `<div class="cart-empty"><p>Procesando pedido...</p></div>`;
   foot.style.display = 'none';
-  Cart.clear();
+
+  try {
+    const payload = {
+      email,
+      items: items.map(({ product: p, qty }) => ({
+        product_id: p.id,
+        quantity:   qty,
+        price:      p.price,
+      })),
+    };
+
+    const res = await fetch('/api/orders', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.error || 'Error al procesar');
+
+    container.innerHTML = `
+      <div class="success-screen">
+        <div class="success-icon">🎉</div>
+        <h3>¡Pedido confirmado!</h3>
+        <p>Pedido #${data.order_id} guardado correctamente.<br>
+           Envío discreto en 2–3 días hábiles.</p>
+        <button class="back-btn" onclick="resetAfterCheckout()">Seguir comprando</button>
+      </div>`;
+
+    Cart.clear();
+
+  } catch (err) {
+    container.innerHTML = `
+      <div class="cart-empty">
+        <p>❌ ${err.message}</p>
+        <button class="back-btn" onclick="resetAfterCheckout()">Volver</button>
+      </div>`;
+    foot.style.display = 'block';
+  }
 }
 
 function resetAfterCheckout() {
