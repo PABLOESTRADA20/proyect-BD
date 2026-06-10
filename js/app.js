@@ -158,10 +158,10 @@ function addToCart(event, id) {
 }
 
 function addToCartById(id) {
-  const p = _products.find((x) => x.id === id);
+  const p = _products.find((x) => Number(x.id) === Number(id));
   if (!p) return;
   Cart.add(p);
-  showToast(`${p.emoji} ${p.name} añadido`);
+  showToast(`${p.name} añadido`);
 }
 
 function updateCartUI({ items, count, total }) {
